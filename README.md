@@ -4,3 +4,5 @@ GitHub repository to accompany the paper: Colbert, J., Chuang, I. T., & Sila-Now
 
 The folder "First_paper_code" contains the key R scripts required to run the analyses in the paper.
 The folder "Second_paper_code" contains the R and Python scripts required to run the analyses so far for the second paper (still a work in progress).
+
+Note: to run the Python script ArcGIS Pro must be installed on the computer which the script will be run on, and the Python interpreter used to run the script needs to be the Python install included with ArcGIS Pro in order to access the arcpy site package.
