@@ -441,17 +441,13 @@ for dataset in input_datasets:
     print(f"Line distance calculation for dataset {dataset} completed successfully")
 
 
-    #### Code below to the end of the script is a WIP ####
-    # This code should work, but is not currently outputting any routes
-    # Most of the utilisation metrics can be calculated without this result (see note in r utilisation script)
-
     # Network analysis
     # Paired points
     # Using the paired points, calculate the network distance between the points
+    # output routes
     output_routes = os.path.join(output_dir, f"Output_{dataset}", f"homeloc_{dataset}_actual_park_visit_network_routes.shp")
     
-    # Use Route analysis
-    # Create layer
+    # Run the network analysis
     result_object = arcpy.na.MakeRouteAnalysisLayer(
         network_data_source=r"Input\nzogps_240215_nal1.gdb\nzogps_240215_nal\nzogps_240215_nal",
         layer_name="Route",
@@ -469,12 +465,9 @@ for dataset in input_datasets:
 
     # Add the paired points as stops
     field_mappings = arcpy.na.NAClassFieldMappings(layer_object, stops_layer_name)
-
     field_mappings["Name"].mappedFieldName = "Line_ID"
-
-    out_stops = os.path.join(output_dir, f"Output_{dataset}", f"homeloc_{dataset}_join_parks_intersect_user_traj_not_null_merge.shp")
-
-    arcpy.na.AddLocations(layer_object, stops_layer_name, out_stops, field_mappings, "")
+    field_mappings["RouteName"].mappedFieldName = "Line_ID" #set RouteName to Line_ID so each unique line ID is a separate route
+    arcpy.na.AddLocations(layer_object, stops_layer_name, os.path.join(output_dir, f"Output_{dataset}", f"homeloc_{dataset}_join_parks_intersect_user_traj_not_null_sql_merge_MANUAL.shp"), field_mappings, "")
 
     # Solve, ignoring any invalid locations
     arcpy.na.Solve(layer_object, "SKIP")
@@ -482,23 +475,24 @@ for dataset in input_datasets:
     # Save the output to a shapefile
     routes_layer = layer_object.listLayers("Routes")[0]
     arcpy.management.CopyFeatures(routes_layer, output_routes)
-    
+
+    # optional
     # Check that all the points were added as stops
     # Get the number of features in the input dataset
-    input_point_count = arcpy.management.GetCount(
-        in_rows=os.path.join(output_dir, f"Output_{dataset}", f"homeloc_{dataset}_join_parks_intersect_user_traj_not_null_merge.shp")
-    )
+    #input_point_count = arcpy.management.GetCount(
+    #    in_rows=os.path.join(output_dir, f"Output_{dataset}", f"homeloc_{dataset}_join_parks_intersect_user_traj_not_null_merge.shp")
+    #)
 
-    print(input_point_count)
+    #print(input_point_count)
 
     # Get the number of stops added
-    stops_added = int(arcpy.GetCount_management("Route\\Stops").getOutput(0))
+    #stops_added = int(arcpy.GetCount_management("Route\\Stops").getOutput(0))
 
-    print(stops_added)
+    #print(stops_added)
 
     # If the number of stops added is not equal to the number of features in the input dataset, print a warning
-    if input_point_count != stops_added:
-        print(f"Warning: Not all stops were added to the network analysis layer for dataset {dataset}")
+    #if input_point_count != stops_added:
+    #    print(f"Warning: Not all stops were added to the network analysis layer for dataset {dataset}")
 
     # Add code here to handle the case where not all stops were added
     # TBA
