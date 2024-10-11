@@ -4,8 +4,8 @@
 # 2024
 # Jessie Colbert, Katarzyna Sila-Nowicka, I-Ting Chuang, The University of Auckland
 
-#### WIP - the metrics that use the actual park visits network analysis distance are still TBC in the Python script ####
-#### Note that this only affects the calculation of the DAT, which currently uses the Euclidean distance as a stand-in, and the network distance version of the NPVR. The Euclidean distance versions can be output using the script below, and the network distance code will be added ASAP ####
+#### WIP - the metrics that use the actual park visits network analysis distance have been added to the script, but additional code needs to be added to the Python script to check that the network analysis runs for all input points ####
+#### Note that any changes to the actual park visits network analysis would only affect the calculation of the DAT, and the network distance version of the NPVR ####
 
 # load packages
 library(sp)
@@ -157,9 +157,14 @@ foreach(i = 1:length(input_datasets),
   # Load in the three distances per median centroid (hashed_id), the geometry is the home location point
   homeloc_dist_shp = st_read(paste0("Output/Output_", input_datasets[[i]], "/homeloc_", input_datasets[[i]], "_three_distances_LCDB_grid_id.shp"))
   
-  # Load in the result (so far) of the actual park visits
-  # NOTE this will eventually also contain the network analysis for actual park visits, Euclidean distance only for now
+  # Load in the result of the actual park visits, Euclidean distance
   actual_park_visits_lines = st_read(paste0("Output/Output_", input_datasets[[i]], "/homeloc_", input_datasets[[i]], "_join_parks_intersect_user_traj_not_null_merge_lines.shp"))
+  
+  # Load in the result of the actual park visits, network analysis
+  actual_park_visits_network = st_read(paste0("Output/Output_", input_datasets[[i]], "/homeloc_", input_datasets[[i]], "_actual_park_visit_network_routes.shp"))
+  
+  # add the network analysis results to the lines output
+  actual_park_visits_lines_network = merge(actual_park_visits_lines, st_drop_geometry(actual_park_visits_network[,c(1,11,12)]), by.x = "Line_ID", by.y = "Name", all.x = TRUE, all.y = TRUE) # columns Name, Total_Leng, Total_Minu
   
   # use the park point centroid version
   actual_park_visits_park_centroid = st_read(paste0("Output/Output_", input_datasets[[i]], "/park_points_join_homeloc_", input_datasets[[i]], "_parks_intersect_user_traj_not_null_N.shp"))
@@ -167,9 +172,10 @@ foreach(i = 1:length(input_datasets),
   # convert to NZGD CRS for later calculations
   actual_park_visits_park_centroid = st_transform(actual_park_visits_park_centroid, crs = 2193)
   
-  actual_park_visits_park_centroid_dist = merge(actual_park_visits_park_centroid, st_drop_geometry(actual_park_visits_lines)[,c(2,3)], by = "Line_ID", all.x = TRUE, all.y = TRUE)
+  actual_park_visits_park_centroid_dist = merge(actual_park_visits_park_centroid, st_drop_geometry(actual_park_visits_lines_network)[,c(1,3,4)], by = "Line_ID", all.x = TRUE, all.y = TRUE) # Columns Line_ID, LENGTH, Total_Leng
   
   actual_park_visits_park_centroid_dist$Near_dist = actual_park_visits_park_centroid_dist$LENGTH
+  actual_park_visits_park_centroid_dist$Network_dist = actual_park_visits_park_centroid_dist$Total_Leng
   
   # clip to those users that have their home location within the study site
   # subset to those rows where the hashed_id is within the unique list of values in the LCDB output shapefile
@@ -210,15 +216,30 @@ foreach(i = 1:length(input_datasets),
   
   # some users with a home location within the study site may not have visited any park, so some rows will have NA values for the actual park visit distance
   
+  # network distance (Total_Leng)
+  actual_min_park_visited_network = st_drop_geometry(actual_park_visits_park_centroid_dist_LCDB) %>%
+    group_by(hashd_d) %>%
+    filter(Total_Leng == min(Total_Leng, na.rm = TRUE))
+  # Check for any warnings and handle any errors as required
+  
+  actual_min_park_visited_network.df = as.data.frame(actual_min_park_visited_network)
+  
+  # remove duplicate rows
+  actual_min_park_visited_network.df_nodup = actual_min_park_visited_network.df %>% distinct(hashd_d, .keep_all = TRUE)
+  
+  # join the theoretical and actual park visits based on the hashed_id
+  merged_table_network = merge(st_drop_geometry(homeloc_dist_shp), actual_min_park_visited_network.df_nodup,
+                               by.x = "hashd_d", by.y = "hashd_d", all.x = TRUE, all.y = TRUE)
+  
   
   #### DAT ####
-  # FOR EUCLIDEAN AS A PROXY - this ideally should use the network distance for the actual visited closest park - TBA
-  # Use theoretical closest park (network distance for home locations)
-  # Use euclidean distance actual visited closest park
+  # Euclidean distance
   
   # calculate differences between minimum distance to park actually visited and minimum distance to any park
   # actual - theoretical
-  merged_table$DAT = merged_table$LENGTH - merged_table$Ttl_Lng
+  # exclude the DAT for rows where at least one value was NA
+  # change value to NA
+  merged_table$DAT = ifelse((is.na(merged_table$LENGTH) == TRUE)|(is.na(merged_table$Ttl_Lng) == TRUE), NA, merged_table$LENGTH - merged_table$Ttl_Lng)
   hist(merged_table$DAT)
   summary(merged_table$DAT)
   
@@ -236,6 +257,26 @@ foreach(i = 1:length(input_datasets),
   # save the result to a table which when combined with the grid cell geometries can be mapped
   # send this to Sila
   write.csv(summary_DAT_by_grid_id, paste0("Output/Output_", input_datasets[[i]], "/homeloc_", input_datasets[[i]], "_DAT_averages_grid_id.csv"))
+  
+  
+  # Network version
+  merged_table_network$DAT = merged_table_network$Total_Leng - merged_table_network$Ttl_Lng
+  hist(merged_table_network$DAT)
+  summary(merged_table_network$DAT)
+  
+  # average
+  summary_DAT_by_grid_id_network = merged_table_network %>%
+    group_by(id_1) %>%
+    summarise(
+      Mean_DAT = mean(DAT, na.rm = TRUE),
+      Median_DAT = median(DAT, na.rm = TRUE)
+    )
+  
+  colnames(summary_DAT_by_grid_id_network)[1] = "grid_id"
+  
+  # save to csv
+  write.csv(summary_DAT_by_grid_id_network, paste0("Output/Output_", input_datasets[[i]], "/homeloc_", input_datasets[[i]], "_DAT_averages_grid_id_network.csv"))
+  
   
   
   #### UPO ####
@@ -553,8 +594,6 @@ foreach(i = 1:length(input_datasets),
   # Number of users who live (have home location within) in a particular grid cell that visited their closest theoretical park divided by the total number of users who live (have home location within) within the grid cell
   
   # calculate for both Euclidean distance and network distance
-  #### NOTE - currently only calculated for the Euclidean distance ####
-  #### Network distance version TBA ####
   
   ## STEP ONE ##
   # Using dataset from DAT with list of parks visited by a user, with the hashed_id of the user who visited the park and the distance between the park centroid and the home location of the user (using either Euclidean distance or network distance)
@@ -574,7 +613,7 @@ foreach(i = 1:length(input_datasets),
   # Network distance (closest facility), park_ID is for the original data, polygon_id is for the actual visits (new dataset)
   # Euclidean distance, NEAR_FID is the original data, polygon_id is for the actual visits (new dataset)
   
-  # EUCLIDEAN DISTANCE ONLY FOR NOW
+  # EUCLIDEAN DISTANCE
   # theoretical closest park ID
   # actual closest park ID (Euclidean)
   
@@ -582,6 +621,9 @@ foreach(i = 1:length(input_datasets),
   NPVR_calc = merged_table
   
   NPVR_calc_visited_park = NPVR_calc[NPVR_calc$plyg_ID == NPVR_calc$polygon_id,]
+  
+  # exclude those where the hashed_id is NA
+  NPVR_calc_visited_park = NPVR_calc_visited_park[!is.na(NPVR_calc_visited_park$hashd_d),]
   
   # Add a column to track if a user is included
   NPVR_calc_visited_park$included = rep(1, length(NPVR_calc_visited_park$hashd_d))
@@ -592,8 +634,8 @@ foreach(i = 1:length(input_datasets),
   )
   
   # add information on whether a user visited closest theoretical park or not
-  users_list_innercity_join = merge(users_list_innercity, NPVR_calc_visited_park[,c(1,23,56,62)], all.x = TRUE,
-                               by.x = "hashed_id", by.y = "hashd_d")
+  users_list_innercity_join = merge(users_list_innercity, NPVR_calc_visited_park[,c(1,23,56,64)], all.x = TRUE,
+                                    by.x = "hashed_id", by.y = "hashd_d") #hashd_d, plyg_ID, polygon_id, included
   
   
   # if user did not visit closest theoretical park (NA), Euclidean distance, assign value of 0 else 1
@@ -601,7 +643,7 @@ foreach(i = 1:length(input_datasets),
   
     # join the grid id to the df, based on the hashed_id and the home location of that user
   users_list_innercity_join_grid_id = merge(users_list_innercity_join, merged_table[,c(1,24)],
-                                                                by.x = "hashed_id", by.y = "hashd_d", all.x = TRUE)
+                                                                by.x = "hashed_id", by.y = "hashd_d", all.x = TRUE) #hashd_d, id_1 
   
   # calculate the NPVR
   # by grid cell, calculate the count of unique users that visited their closest theoretical park, and the total number of users in the grid cell
@@ -619,7 +661,52 @@ foreach(i = 1:length(input_datasets),
   
   # save the result to a table which when combined with the grid cell geometries can be mapped
   write.csv(NPVR_by_grid_id, paste0("Output/Output_", input_datasets[[i]], "/homeloc_", input_datasets[[i]], "_NPVR_averages_grid_id.csv"))
-
+  
+  # network
+  NPVR_calc_network = merged_table_network
+  
+  NPVR_calc_network_visited_park = NPVR_calc_network[NPVR_calc_network$plyg_ID == NPVR_calc_network$polygon_id,]
+  
+  # exclude those where the hashed_id is NA
+  NPVR_calc_network_visited_park = NPVR_calc_network_visited_park[!is.na(NPVR_calc_network_visited_park$hashd_d),]
+  
+  # Add a column to track if a user is included
+  NPVR_calc_network_visited_park$included = rep(1, length(NPVR_calc_network_visited_park$hashd_d))
+  
+  # full list of all hashed_ids in the study site (regardless of whether they visited any park)
+  users_list_innercity = data.frame(
+    hashed_id = clipped_hashed_id
+  )
+  
+  # add information on whether a user visited closest theoretical park or not
+  # check the columns to use
+  users_list_innercity_join_network = merge(users_list_innercity, NPVR_calc_network_visited_park[,c(1,23,56,64)], all.x = TRUE,
+                                            by.x = "hashed_id", by.y = "hashd_d") #hashd_d, plyg_ID, polygon_id, included
+  
+  
+  # if user did not visit closest theoretical park (NA), network distance, assign value of 0 else 1
+  users_list_innercity_join_network$visited_park_network = ifelse(users_list_innercity_join_network$included %in% c(NA), 0, 1)
+  
+  # join the grid id to the df, based on the hashed_id and the home location of that user
+  users_list_innercity_join_network_grid_id = merge(users_list_innercity_join_network, merged_table_network[,c(1,24)],
+                                                    by.x = "hashed_id", by.y = "hashd_d", all.x = TRUE) #hashd_d, id_1
+  
+  # calculate the NPVR
+  # by grid cell, calculate the count of unique users that visited their closest theoretical park, and the total number of users in the grid cell
+  # divide one by the other to get the proportion
+  NPVR_by_grid_id_network = users_list_innercity_join_network_grid_id %>%
+    group_by(id_1) %>%
+    summarise(
+      total_rows = n(),
+      count_visit_theoretical_park = sum(visited_park_network == 1, na.rm = TRUE)
+    )
+  
+  NPVR_by_grid_id_network$NPVR_network = NPVR_by_grid_id_network$count_visit_theoretical_park/NPVR_by_grid_id_network$total_rows
+  
+  colnames(NPVR_by_grid_id_network)[1] = "grid_id"
+  
+  # save the result to a table which when combined with the grid cell geometries can be mapped
+  write.csv(NPVR_by_grid_id_network, paste0("Output/Output_", input_datasets[[i]], "/homeloc_", input_datasets[[i]], "_NPVR_averages_grid_id_network.csv"))
   
 }
 
